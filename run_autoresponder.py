@@ -10,6 +10,7 @@ import re
 import smtplib
 import sys
 from _socket import gaierror
+from log import Log
 
 config = None
 config_file_path = "autoresponder.config.ini"
@@ -31,6 +32,7 @@ def run():
     connect_to_mail_servers()
     check_folder_names()
     mails = fetch_emails()
+    Log.d('mails: ' + str(mails))
     for mail in mails:
         process_email(mail)
     log_statistics()
@@ -50,7 +52,7 @@ def get_config_file_path():
 def initialize_configuration():
     try:
         config_file = configparser.ConfigParser()
-        config_file.read(config_file_path, encoding="UTF-8")
+        config_file.read(config_file_path, encoding="gb18030")
         global config
         config = {
             'in.user': cast(config_file["login credentials"]["mailserver.incoming.username"], str),
@@ -82,9 +84,13 @@ def check_folder_names():
     (retcode, msg_count) = incoming_mail_server.select(config['folders.inbox'])
     if retcode != "OK":
         shutdown_with_error("Inbox folder does not exist: " + config['folders.inbox'])
+    Log.i('INBOX mails have gotten.')
+    Log.d('msg_count: ' + str(msg_count))
     (retcode, msg_count) = incoming_mail_server.select(config['folders.trash'])
     if retcode != "OK":
         shutdown_with_error("Trash folder does not exist: " + config['folders.trash'])
+    Log.i('TRASH mails have gotten.')
+    Log.d('msg_count: ' + str(msg_count))
 
 
 def connect_to_imap():
@@ -93,7 +99,7 @@ def connect_to_imap():
     except gaierror:
         shutdown_with_error("IMAP connection failed! Specified host not found.")
     except imaplib.IMAP4_SSL.error as e:
-        shutdown_with_error("IMAP login failed! Reason: '" + cast(e.args[0], str, 'UTF-8') + "'.")
+        shutdown_with_error("IMAP login failed! Reason: '" + cast(e.args[0], str, 'gb18030') + "'.")
     except Exception as e:
         shutdown_with_error("IMAP connection/login failed! Reason: '" + cast(e, str) + "'.")
 
@@ -104,6 +110,7 @@ def do_connect_to_imap():
     (retcode, capabilities) = incoming_mail_server.login(config['in.user'], config['in.pw'])
     if retcode != "OK":
         shutdown_with_error("IMAP login failed! Return code: '" + cast(retcode, str) + "'.")
+    Log.i('IMAP login succeed.')
 
 
 def connect_to_smtp():
@@ -112,24 +119,25 @@ def connect_to_smtp():
     except gaierror:
         shutdown_with_error("SMTP connection failed! Specified host not found.")
     except smtplib.SMTPAuthenticationError as e:
-        shutdown_with_error("SMTP login failed! Reason: '" + cast(e.smtp_error, str, 'UTF-8') + "'.")
+        shutdown_with_error("SMTP login failed! Reason: '" + cast(e.smtp_error, str, 'gb18030') + "'.")
     except Exception as e:
         shutdown_with_error("SMTP connection/login failed! Reason: '" + cast(e, str) + "'.")
 
 
 def do_connect_to_smtp():
     global outgoing_mail_server
-    outgoing_mail_server = smtplib.SMTP(config['out.host'], config['out.port'])
-    outgoing_mail_server.starttls()
+    outgoing_mail_server = smtplib.SMTP_SSL(config['out.host'], config['out.port'])
+    #outgoing_mail_server.starttls()
     (retcode, capabilities) = outgoing_mail_server.login(config['out.user'], config['out.pw'])
     if not (retcode == 235 or retcode == 250):
         shutdown_with_error("SMTP login failed! Return code: '" + str(retcode) + "'.")
+    Log.i('SMTP login succeed.')
 
 
 def fetch_emails():
     # get the message ids from the inbox folder
     incoming_mail_server.select(config['folders.inbox'])
-    (retcode, message_indices) = incoming_mail_server.search(None, 'ALL')
+    (retcode, message_indices) = incoming_mail_server.search(None, 'UNSEEN')
     if retcode == 'OK':
         messages = []
         for message_index in message_indices[0].split():
@@ -137,10 +145,10 @@ def fetch_emails():
             (retcode, data) = incoming_mail_server.fetch(message_index, '(RFC822)')
             if retcode == 'OK':
                 # parse the message into a useful format
-                message = email.message_from_string(data[0][1].decode('utf-8'))
+                message = email.message_from_string(data[0][1].decode('gb18030'))
                 (retcode, data) = incoming_mail_server.fetch(message_index, "(UID)")
                 if retcode == 'OK':
-                    mail_uid = parse_uid(cast(data[0], str, 'UTF-8'))
+                    mail_uid = parse_uid(cast(data[0], str, 'gb18030'))
                     message['mailserver_email_uid'] = mail_uid
                     messages.append(message)
                 else:
@@ -159,7 +167,7 @@ def process_email(mail):
     try:
         mail_from = email.header.decode_header(mail['From'])
         mail_sender = mail_from[-1]
-        mail_sender = cast(mail_sender[0], str, 'UTF-8')
+        mail_sender = cast(mail_sender[0], str, 'gb18030')
         if config['request.from'] in mail_sender:
             reply_to_email(mail)
             delete_email(mail)
@@ -167,18 +175,21 @@ def process_email(mail):
             statistics['mails_wrong_sender'] += 1
         statistics['mails_processed'] += 1
     except Exception as e:
-        log_warning("Unexpected error while processing email: '" + str(e) + "'.")
+        Log.w("Unexpected error while processing email: '" + str(e) + "'.")
 
 
 def reply_to_email(mail):
-    receiver_email = email.header.decode_header(mail['Reply-To'])[0][0]
+    Log.d('mail: ' + str(mail))
+    #receiver_email = email.header.decode_header(mail['Reply-To'])[0][0]
+    receiver_email = re.search(r'<.*?>', mail['From'], re.I|re.M)[0][1:-1]  # "@#$%^&*(" <xxx@xxx.com>
+    Log.d('mail[From]: ' + receiver_email)
     message = email.mime.text.MIMEText(config['reply.body'])
     message['Subject'] = config['reply.subject']
     message['To'] = receiver_email
     message['From'] = email.utils.formataddr((
-        cast(email.header.Header(config['display.name'], 'utf-8'), str), config['display.mail']))
+        cast(email.header.Header(config['display.name'], 'gb18030'), str), config['display.mail']))
     outgoing_mail_server.sendmail(config['display.mail'], receiver_email, message.as_string())
-
+    Log.i('Reply mail to ' + receiver_email + '.')
 
 def delete_email(mail):
     result = incoming_mail_server.uid('COPY', mail['mailserver_email_uid'], config['folders.trash'])
@@ -186,8 +197,9 @@ def delete_email(mail):
         statistics['mails_in_trash'] += 1
     else:
         log_warning("Copying email to trash failed. Reason: " + str(result))
-    incoming_mail_server.uid('STORE', mail['mailserver_email_uid'], '+FLAGS', '(\Deleted)')
+    incoming_mail_server.uid('STORE', mail['mailserver_email_uid'], '+FLAGS', '(\Delete)')
     incoming_mail_server.expunge()
+    Log.i('Mail has been seen.')
 
 
 def parse_uid(data):
@@ -211,12 +223,12 @@ def shutdown_with_error(message):
     message += "\nCurrent configuration file path: '" + str(config_file_path) + "'."
     if config is not None:
         message += "\nCurrent configuration: " + str(config)
-    print(message)
+    Log.e(print(message))
     shutdown(-1)
 
 
 def log_warning(message):
-    print("Warning! " + message)
+    Log.w("Warning! " + message)
 
 
 def log_statistics():
@@ -238,7 +250,7 @@ def log_statistics():
         message += "Encountered " + str(loading_errors) + " errors while loading emails, " + \
                    str(processing_errors) + " errors while processing emails and " + \
                    str(moving_errors) + " errors while moving emails to trash."
-    print(message)
+    Log.i(message)
 
 
 def display_help_text():
