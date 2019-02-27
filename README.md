@@ -1,4 +1,6 @@
-# Python E-Mail Autoresponder
+# Python E-Mail Autoresponder for QQ-Mail
+
+对QQ邮箱进行适配的魔改版邮件自动回复工具。
 
 Simple python script that connects to a mail server via IMAP and SMTP and replies to 
 all emails in the inbox coming from a certain sender address using the Reply-To header.

@@ -168,7 +168,7 @@ def process_email(mail):
         mail_from = email.header.decode_header(mail['From'])
         mail_sender = mail_from[-1]
         mail_sender = cast(mail_sender[0], str, 'gb18030')
-        if config['request.from'] in mail_sender:
+        if config['request.from'] in mail_sender and '10000@qq.com' not in mail_sender:
             reply_to_email(mail)
             delete_email(mail)
         else:
@@ -180,9 +180,13 @@ def process_email(mail):
 
 def reply_to_email(mail):
     Log.d('mail: ' + str(mail))
-    #receiver_email = email.header.decode_header(mail['Reply-To'])[0][0]
-    receiver_email = re.search(r'<.*?>', mail['From'], re.I|re.M)[0][1:-1]  # "@#$%^&*(" <xxx@xxx.com>
+    # get receiver email
+    if('<' in mail['From'] and '>' in mail['From']):
+        receiver_email = re.search(r'<.*?>', mail['From'], re.I|re.M)[0][1:-1]  # "@#$%^&*(" <xxx@xxx.com>
+    else:
+        receiver_email = mail['From']  # xxx@xxx.com
     Log.d('mail[From]: ' + receiver_email)
+
     message = email.mime.text.MIMEText(config['reply.body'])
     message['Subject'] = config['reply.subject']
     message['To'] = receiver_email
@@ -197,9 +201,9 @@ def delete_email(mail):
         statistics['mails_in_trash'] += 1
     else:
         log_warning("Copying email to trash failed. Reason: " + str(result))
-    incoming_mail_server.uid('STORE', mail['mailserver_email_uid'], '+FLAGS', '(\Delete)')
+    incoming_mail_server.uid('STORE', mail['mailserver_email_uid'], '+FLAGS', '(\Deleted)')
     incoming_mail_server.expunge()
-    Log.i('Mail has been seen.')
+    Log.i('Mail has been deleted.')
 
 
 def parse_uid(data):
