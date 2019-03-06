@@ -1,2 +1,1 @@
 python run_autoresponder.py
-pause
